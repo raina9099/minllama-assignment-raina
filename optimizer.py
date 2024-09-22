@@ -1,4 +1,5 @@
 from typing import Callable, Iterable, Tuple
+import math
 
 import torch
 from torch.optim import Optimizer
@@ -38,23 +39,46 @@ class AdamW(Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
-                raise NotImplementedError()
-
                 # State should be stored in this dictionary
                 state = self.state[p]
+
+                if len(state) == 0:
+                    state['step'] = 0
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] =  torch.zeros_like(p.data)
 
                 # Access hyperparameters from the `group` dictionary
                 alpha = group["lr"]
 
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                beta1, beta2 = group['betas']
+
+                state['step'] += 1
+
                 # Update first and second moments of the gradients
+                exp_avg = beta1 * exp_avg + (1 - beta1) * grad
+                exp_avg_sq = beta2 * exp_avg_sq + (1 - beta2) * grad * grad
+                state['exp_avg'] = exp_avg
+                state['exp_avg_sq'] = exp_avg_sq
+
+                step_size = group['lr']
 
                 # Bias correction
                 # Please note that we are using the "efficient version" given in
                 # https://arxiv.org/abs/1412.6980
+                if group['correct_bias']:  # bias correction
+                    bias_correction1 = 1 - beta1 ** state['step']
+                    bias_correction2 = 1 - beta2 ** state['step']
+                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
+
 
                 # Update parameters
+                denom = torch.sqrt(state['exp_avg_sq']) + group['eps']
+                p.data = p.data - step_size * exp_avg / denom
 
                 # Add weight decay after the main gradient-based updates.
                 # Please note that the learning rate should be incorporated into this update.
-
+                if group['weight_decay'] > 0.0:
+                    p.data = p.data - group['lr'] * group['weight_decay'] * p.data
+        
         return loss
